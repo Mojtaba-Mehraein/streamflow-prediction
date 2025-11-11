@@ -1,0 +1,102 @@
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from keras.models import Sequential
+from keras.layers import LSTM, Dense
+from sklearn.metrics import r2_score, mean_squared_error
+import matplotlib.pyplot as plt
+from pygwo import grey_wolf_optimizer  # نیاز به نصب کتابخانه pygwo
+
+# 1. خواندن داده‌ها از فایل اکسل
+data = pd.read_excel('hydrological_data.xlsx')
+features = data.iloc[:, :-1].values  # 11 ستون اول به عنوان ویژگی
+labels = data.iloc[:, -1].values     # ستون آخر به عنوان برچسب
+
+# 2. نرمال‌سازی داده‌ها بین 0 و 1
+scaler_features = MinMaxScaler(feature_range=(0, 1))
+features_scaled = scaler_features.fit_transform(features)
+scaler_labels = MinMaxScaler(feature_range=(0, 1))
+labels_scaled = scaler_labels.fit_transform(labels.reshape(-1, 1))
+
+# 3. تقسیم داده‌ها به آموزش و آزمون (70-30)
+X_train, X_test, y_train, y_test = train_test_split(
+    features_scaled, labels_scaled, test_size=0.3, random_state=42)
+
+# 4. تبدیل داده‌ها به فرمت مناسب برای LSTM
+def create_dataset(X, y, time_steps=1):
+    Xs, ys = [], []
+    for i in range(len(X) - time_steps):
+        Xs.append(X[i:(i + time_steps)])
+        ys.append(y[i + time_steps])
+    return np.array(Xs), np.array(ys)
+
+time_steps = 3  # تعداد گام‌های زمانی
+X_train_lstm, y_train_lstm = create_dataset(X_train, y_train, time_steps)
+X_test_lstm, y_test_lstm = create_dataset(X_test, y_test, time_steps)
+
+# 5. تعریف معماری LSTM اولیه
+def create_lstm_model(units=50, dropout=0.2):
+    model = Sequential()
+    model.add(LSTM(units=units, return_sequences=True, 
+                  input_shape=(X_train_lstm.shape[1], X_train_lstm.shape[2])))
+    model.add(LSTM(units=units, dropout=dropout))
+    model.add(Dense(1))
+    model.compile(optimizer='adam', loss='mse')
+    return model
+
+# 6. تابع هدف برای الگوریتم گرگ خاکستری (GWO)
+def objective_function(params):
+    units = int(params[0])
+    dropout = params[1]
+    epochs = int(params[2])
+    batch_size = int(params[3])
+    
+    model = create_lstm_model(units, dropout)
+    history = model.fit(X_train_lstm, y_train_lstm, 
+                       epochs=epochs, batch_size=batch_size, 
+                       validation_split=0.2, verbose=0)
+    val_loss = min(history.history['val_loss'])
+    return val_loss
+
+# 7. بهینه‌سازی پارامترهای LSTM با GWO
+bounds = [
+    {'name': 'units', 'type': 'discrete', 'domain': (30, 50, 100, 150)},
+    {'name': 'dropout', 'type': 'continuous', 'domain': (0.1, 0.3)},
+    {'name': 'epochs', 'type': 'discrete', 'domain': (30, 50, 100)},
+    {'name': 'batch_size', 'type': 'discrete', 'domain': (16, 32, 64)}
+]
+
+gwo_result = grey_wolf_optimizer(objective_function, bounds, num_wolves=10, 
+                                max_iter=20, minimize=True)
+
+# 8. آموزش مدل نهایی با پارامترهای بهینه
+best_params = gwo_result['best_params']
+best_model = create_lstm_model(units=int(best_params[0]), 
+                              dropout=best_params[1])
+history = best_model.fit(X_train_lstm, y_train_lstm, 
+                        epochs=int(best_params[2]), 
+                        batch_size=int(best_params[3]),
+                        validation_data=(X_test_lstm, y_test_lstm),
+                        verbose=1)
+
+# 9. ارزیابی مدل
+y_pred_scaled = best_model.predict(X_test_lstm)
+y_pred = scaler_labels.inverse_transform(y_pred_scaled)
+y_test_actual = scaler_labels.inverse_transform(y_test_lstm)
+
+r2 = r2_score(y_test_actual, y_pred)
+rmse = np.sqrt(mean_squared_error(y_test_actual, y_pred))
+
+print(f'R2 Score: {r2:.4f}')
+print(f'RMSE: {rmse:.4f}')
+
+# 10. نمایش نتایج
+plt.figure(figsize=(12, 6))
+plt.plot(y_test_actual, label='Actual Discharge')
+plt.plot(y_pred, label='Predicted Discharge')
+plt.title(f'Discharge Prediction (R2={r2:.3f}, RMSE={rmse:.3f})')
+plt.xlabel('Time Steps')
+plt.ylabel('Discharge')
+plt.legend()
+plt.show()
