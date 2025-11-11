@@ -160,20 +160,6 @@ Contributions are welcome! Please feel free to submit pull requests or open issu
 - Performance improvements
 - Documentation enhancements
 
-## 📝 License
-
-This project is open source and available under the [MIT License](LICENSE).
-
-## 🙏 Acknowledgments
-
-- **Keras/TensorFlow**: For LSTM implementation
-- **scikit-learn**: For data preprocessing and metrics
-- **pygwo**: For Grey Wolf Optimizer implementation
-- **Matplotlib**: For visualization
-
-## 📞 Contact
-
-For questions or support, please open an issue in the repository.
 
 ---
 
